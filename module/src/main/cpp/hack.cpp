@@ -159,6 +159,7 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
 
     // API 35+: dlopen("libhoudini.so"/libnb.so) bi chan namespace -> dung xdl
     void *nb_handle = dlopen("libhoudini.so", RTLD_NOW);
+    bool nb_via_xdl = false;
     std::string nb_name = "libhoudini.so";
     if (!nb_handle) {
         nb_name = GetNativeBridgeLibrary();
@@ -169,11 +170,18 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
         LOGI("dlopen nb failed, fallback to xdl");
         nb_handle = xdl_open("libhoudini.so", XDL_TRY_FORCE_LOAD);
         if (!nb_handle) nb_handle = xdl_open(nb_name.c_str(), XDL_TRY_FORCE_LOAD);
+        nb_via_xdl = (nb_handle != nullptr);
     }
     if (nb_handle) {
-        LOGI("nb %p", nb_handle);
-        void *itf = dlsym(nb_handle, "NativeBridgeItf");
-        if (!itf) itf = xdl_dsym(nb_handle, "NativeBridgeItf", nullptr);
+        LOGI("nb %p (via_xdl=%d)", nb_handle, nb_via_xdl);
+        void *itf = nullptr;
+        if (nb_via_xdl) {
+            itf = xdl_sym(nb_handle, "NativeBridgeItf", nullptr);
+            if (!itf) itf = xdl_dsym(nb_handle, "NativeBridgeItf", nullptr);
+        } else {
+            itf = dlsym(nb_handle, "NativeBridgeItf");
+        }
+        LOGI("NativeBridgeItf %p", itf);
         auto callbacks = (NativeBridgeCallbacks *) itf;
         if (callbacks) {
             LOGI("NativeBridgeLoadLibrary %p", callbacks->loadLibrary);
