@@ -115,10 +115,26 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
     //TODO 等待houdini初始化
     sleep(5);
 
+    // API 35+: dlopen("libart.so") bi chan boi linker namespace -> dung xdl
+    void *vm_symbol = nullptr;
     auto libart = dlopen("libart.so", RTLD_NOW);
-    auto JNI_GetCreatedJavaVMs = (jint (*)(JavaVM **, jsize, jsize *)) dlsym(libart,
-                                                                             "JNI_GetCreatedJavaVMs");
+    if (libart) {
+        vm_symbol = dlsym(libart, "JNI_GetCreatedJavaVMs");
+    }
+    if (!vm_symbol) {
+        LOGI("dlsym failed, fallback to xdl for libart");
+        auto xart = xdl_open("libart.so", XDL_TRY_FORCE_LOAD);
+        if (xart) {
+            vm_symbol = xdl_dsym(xart, "JNI_GetCreatedJavaVMs", nullptr);
+            if (!vm_symbol) vm_symbol = xdl_sym(xart, "JNI_GetCreatedJavaVMs", nullptr);
+        }
+    }
+    auto JNI_GetCreatedJavaVMs = (jint (*)(JavaVM **, jsize, jsize *)) vm_symbol;
     LOGI("JNI_GetCreatedJavaVMs %p", JNI_GetCreatedJavaVMs);
+    if (!JNI_GetCreatedJavaVMs) {
+        LOGE("JNI_GetCreatedJavaVMs not found");
+        return false;
+    }
     JavaVM *vms_buf[1];
     JavaVM *vms;
     jsize num_vms;
