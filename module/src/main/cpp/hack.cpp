@@ -33,6 +33,12 @@ void hack_start(const char *game_data_dir) {
     if (!load) {
         LOGI("libil2cpp.so not found in thread %d", gettid());
     }
+    if (game_data_dir && load) {
+        // Marker: il2cpp da init xong — x86 side se load frida-gadget luc nay.
+        std::string marker = std::string(game_data_dir) + "/cache/il2cpp_ready";
+        int mf = open(marker.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (mf != -1) { close(mf); LOGI("marker il2cpp_ready created"); }
+    }
 }
 
 std::string GetLibDir(JavaVM *vms) {
@@ -111,6 +117,8 @@ struct NativeBridgeCallbacks {
     void *(*loadLibraryExt)(const char *libpath, int flag, void *ns);
 };
 
+static NativeBridgeCallbacks *g_bridgeCallbacks = nullptr;
+
 bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length, void *gadget_data, size_t gadget_length) {
     //TODO 等待houdini初始化
     sleep(5);
@@ -160,6 +168,7 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
     // API 35+: dlopen("libhoudini.so"/libnb.so) bi chan namespace -> dung xdl
     void *nb_handle = dlopen("libhoudini.so", RTLD_NOW);
     bool nb_via_xdl = false;
+    g_bridgeCallbacks = nullptr;
     std::string nb_name = "libhoudini.so";
     if (!nb_handle) {
         nb_name = GetNativeBridgeLibrary();
@@ -183,6 +192,7 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
         }
         LOGI("NativeBridgeItf %p", itf);
         auto callbacks = (NativeBridgeCallbacks *) itf;
+        g_bridgeCallbacks = callbacks;
         if (callbacks) {
             LOGI("NativeBridgeLoadLibrary %p", callbacks->loadLibrary);
             LOGI("NativeBridgeLoadLibraryExt %p", callbacks->loadLibraryExt);
@@ -198,19 +208,6 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
             snprintf(path, PATH_MAX, "/proc/self/fd/%d", fd);
             LOGI("arm path %s", path);
 
-            // Load frida-gadget arm64 vao ARM realm TRUOC module dump (qua memfd).
-            void *ghandle = nullptr;
-            if (gadget_data && gadget_length) {
-                int gfd = syscall(__NR_memfd_create, "gadget", MFD_CLOEXEC);
-                ftruncate(gfd, (off_t) gadget_length);
-                void *gmem = mmap(nullptr, gadget_length, PROT_WRITE, MAP_SHARED, gfd, 0);
-                memcpy(gmem, gadget_data, gadget_length);
-                munmap(gmem, gadget_length);
-                char gpath[PATH_MAX];
-                snprintf(gpath, PATH_MAX, "/proc/self/fd/%d", gfd);
-                ghandle = callbacks->loadLibraryExt(gpath, RTLD_NOW, (void *) 3);
-                LOGI("frida gadget in arm realm = %p", ghandle);
-            }
 
             void *arm_handle;
             if (api_level >= 26) {
@@ -243,6 +240,39 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length, void *ga
 #endif
         hack_start(game_data_dir);
 #if defined(__i386__) || defined(__x86_64__)
+        return;
+    }
+    // il2cpp init xong (arm side tao marker) -> moi nap frida-gadget vao ARM realm.
+    if (gadget_data && gadget_length && game_data_dir) {
+        std::string marker = std::string(game_data_dir) + "/cache/il2cpp_ready";
+        for (int i = 0; i < 120; i++) {
+            struct stat sb{};
+            if (stat(marker.c_str(), &sb) == 0) break;
+            sleep(1);
+        }
+        unlink(marker.c_str());
+        int gfd = syscall(__NR_memfd_create, "gadget", MFD_CLOEXEC);
+        ftruncate(gfd, (off_t) gadget_length);
+        void *gmem = mmap(nullptr, gadget_length, PROT_WRITE, MAP_SHARED, gfd, 0);
+        memcpy(gmem, gadget_data, gadget_length);
+        munmap(gmem, gadget_length);
+        char gpath[PATH_MAX];
+        snprintf(gpath, PATH_MAX, "/proc/self/fd/%d", gfd);
+        auto libart = dlopen("libart.so", RTLD_NOW);
+        void *sym = libart ? dlsym(libart, "JNI_GetCreatedJavaVMs") : nullptr;
+        if (!sym) {
+            auto xart = xdl_open("libart.so", XDL_TRY_FORCE_LOAD);
+            if (xart) sym = xdl_dsym(xart, "JNI_GetCreatedJavaVMs", nullptr);
+        }
+        if (!sym) { LOGI("gadget: no GetCreatedJavaVMs"); return; }
+        auto getVMs = (jint (*)(JavaVM **, jsize, jsize *)) sym;
+        JavaVM *vms_buf[1]; jsize nvms = 0;
+        if (getVMs(vms_buf, 1, &nvms) != JNI_OK || nvms < 1) { LOGI("gadget: no VM"); return; }
+        // NativeBridgeItf da resolve trong NativeBridgeLoad — dung lai qua bien static.
+        if (g_bridgeCallbacks && g_bridgeCallbacks->loadLibraryExt) {
+            void *ghandle = g_bridgeCallbacks->loadLibraryExt(gpath, RTLD_NOW, (void *) 3);
+            LOGI("frida gadget AFTER init = %p", ghandle);
+        }
     }
 #endif
 }
