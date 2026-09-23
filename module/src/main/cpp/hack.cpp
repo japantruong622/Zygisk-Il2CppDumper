@@ -237,6 +237,52 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length) {
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     auto game_data_dir = (const char *) reserved;
+
+    // Load frida-gadget arm64 (da duoc x86 side copy vao app cache).
+    if (game_data_dir) {
+        std::string gp = std::string(game_data_dir) + "/cache/gadget.so";
+        void *gh = dlopen(gp.c_str(), RTLD_NOW);
+        LOGI("gadget dlopen(%s) = %p", gp.c_str(), gh);
+        if (!gh) {
+            // Fallback: load qua NativeBridge (nhu NativeBridgeLoad cua module).
+            void *nb = dlopen("libhoudini.so", RTLD_NOW);
+            void *itf = nullptr;
+            if (nb) itf = dlsym(nb, "NativeBridgeItf");
+            if (!itf) {
+                auto xnb = xdl_open("libhoudini.so", XDL_TRY_FORCE_LOAD);
+                if (xnb) {
+                    itf = xdl_sym(xnb, "NativeBridgeItf", nullptr);
+                    if (!itf) itf = xdl_dsym(xnb, "NativeBridgeItf", nullptr);
+                }
+            }
+            struct NBCallbacks {
+                uint32_t version; void *initialize; void *(*loadLibrary)(const char *, int);
+                void *(*getTrampoline)(void *, const char *, const char *, uint32_t);
+                void *isSupported; void *getAppEnv; void *isCompatibleWith; void *getSignalHandler;
+                void *unloadLibrary; void *getError; void *isPathSupported; void *initAnonymousNamespace;
+                void *createNamespace; void *linkNamespaces; void *(*loadLibraryExt)(const char *, int, void *);
+            };
+            auto cb = (NBCallbacks *) itf;
+            if (cb && cb->loadLibraryExt) {
+                gh = cb->loadLibraryExt(gp.c_str(), RTLD_NOW, (void *) 3);
+                LOGI("gadget via bridge = %p", gh);
+            }
+            if (gh && cb && cb->getTrampoline) {
+                auto ginit = (jint (*)(JavaVM *, void *)) cb->getTrampoline(gh, "JNI_OnLoad", nullptr, 0);
+                if (ginit) {
+                    jint gr = ginit(vm, nullptr);
+                    LOGI("gadget JNI_OnLoad = %d", gr);
+                }
+            }
+        } else {
+            auto ginit = (jint (*)(JavaVM *, void *)) dlsym(gh, "JNI_OnLoad");
+            if (ginit) {
+                jint gr = ginit(vm, nullptr);
+                LOGI("gadget JNI_OnLoad = %d", gr);
+            }
+        }
+    }
+
     std::thread hack_thread(hack_start, game_data_dir);
     hack_thread.detach();
     return JNI_VERSION_1_6;

@@ -70,6 +70,28 @@ private:
             } else {
                 LOGW("Unable to open arm file");
             }
+            // Copy frida-gadget arm64 sang cache cua app de JNI_OnLoad (arm realm) load.
+            int gfd = openat(dirfd, "zygisk/gadget.so", O_RDONLY);
+            if (gfd != -1) {
+                std::string cache_dir = std::string(app_data_dir) + "/cache";
+                mkdir(cache_dir.c_str(), 0755);
+                std::string gadget_path = cache_dir + "/gadget.so";
+                int out_fd = open(gadget_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (out_fd != -1) {
+                    char buf[65536];
+                    ssize_t r;
+                    while ((r = read(gfd, buf, sizeof(buf))) > 0) {
+                        if (write(out_fd, buf, r) < 0) break;
+                    }
+                    close(out_fd);
+                    LOGI("gadget copied to %s", gadget_path.c_str());
+                } else {
+                    LOGW("Unable to write gadget to app cache");
+                }
+                close(gfd);
+            } else {
+                LOGW("Unable to open zygisk/gadget.so in module dir");
+            }
 #endif
         } else {
             api->setOption(zygisk::Option::DLCLOSE_MODULE_LIBRARY);

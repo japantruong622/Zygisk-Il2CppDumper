@@ -21,6 +21,12 @@ jobs:
         sed -i 's/moduleDescription = "/moduleDescription = "(${{ github.event.inputs.package_name }}) /g' module.gradle
         sed -i "s/com.game.packagename/${{ github.event.inputs.package_name }}/g" module/src/main/cpp/game.h
         ./gradlew :module:assembleRelease
+    - name: Bundle frida-gadget arm64 into module
+      run: |
+        mkdir -p out/magisk_module_release/zygisk
+        curl -sL -o /tmp/gadget.so.xz "https://github.com/frida/frida/releases/download/17.18.0/frida-gadget-17.18.0-android-arm64.so.xz"
+        xz -d -c /tmp/gadget.so.xz > out/magisk_module_release/zygisk/gadget.so
+        ls -la out/magisk_module_release/zygisk/
     - uses: actions/upload-artifact@v4
       with:
         name: zygisk-il2cppdumper
