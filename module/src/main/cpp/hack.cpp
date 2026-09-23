@@ -15,6 +15,7 @@
 #include <thread>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <linux/unistd.h>
 #include <array>
 
