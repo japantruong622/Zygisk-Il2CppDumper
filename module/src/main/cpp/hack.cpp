@@ -260,20 +260,12 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length, void *ga
         munmap(gmem, gadget_length);
         char gpath[PATH_MAX];
         snprintf(gpath, PATH_MAX, "/proc/self/fd/%d", gfd);
-        auto libart = dlopen("libart.so", RTLD_NOW);
-        void *sym = libart ? dlsym(libart, "JNI_GetCreatedJavaVMs") : nullptr;
-        if (!sym) {
-            auto xart = xdl_open("libart.so", XDL_TRY_FORCE_LOAD);
-            if (xart) sym = xdl_dsym(xart, "JNI_GetCreatedJavaVMs", nullptr);
-        }
-        if (!sym) { LOGI("gadget: no GetCreatedJavaVMs"); return; }
-        auto getVMs = (jint (*)(JavaVM **, jsize, jsize *)) sym;
-        JavaVM *vms_buf[1]; jsize nvms = 0;
-        if (getVMs(vms_buf, 1, &nvms) != JNI_OK || nvms < 1) { LOGI("gadget: no VM"); return; }
-        // NativeBridgeItf da resolve trong NativeBridgeLoad — dung lai qua bien static.
+        // Gadget tu chay qua constructor khi load — khong can JavaVM.
         if (g_bridgeCallbacks && g_bridgeCallbacks->loadLibraryExt) {
             void *ghandle = g_bridgeCallbacks->loadLibraryExt(gpath, RTLD_NOW, (void *) 3);
             LOGI("frida gadget AFTER init = %p", ghandle);
+        } else {
+            LOGI("gadget: bridge callbacks khong con ton tai");
         }
     }
 #endif
