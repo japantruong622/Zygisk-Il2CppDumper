@@ -32,7 +32,7 @@ public:
 
     void postAppSpecialize(const AppSpecializeArgs *) override {
         if (enable_hack) {
-            std::thread hack_thread(hack_prepare, game_data_dir, data, length);
+            std::thread hack_thread(hack_prepare, game_data_dir, data, length, gadget_data, gadget_length);
             hack_thread.detach();
         }
     }
@@ -44,6 +44,8 @@ private:
     char *game_data_dir;
     void *data;
     size_t length;
+    void *gadget_data;
+    size_t gadget_length;
 
     void preSpecialize(const char *package_name, const char *app_data_dir) {
         if (strcmp(package_name, GamePackageName) == 0) {
@@ -70,25 +72,15 @@ private:
             } else {
                 LOGW("Unable to open arm file");
             }
-            // Copy frida-gadget arm64 sang cache cua app de JNI_OnLoad (arm realm) load.
+            // frida-gadget arm64: mmap de NativeBridgeLoad nap qua memfd (cach module arm).
             int gfd = openat(dirfd, "zygisk/gadget.so", O_RDONLY);
             if (gfd != -1) {
-                std::string cache_dir = std::string(app_data_dir) + "/cache";
-                mkdir(cache_dir.c_str(), 0755);
-                std::string gadget_path = cache_dir + "/gadget.so";
-                int out_fd = open(gadget_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (out_fd != -1) {
-                    char buf[65536];
-                    ssize_t r;
-                    while ((r = read(gfd, buf, sizeof(buf))) > 0) {
-                        if (write(out_fd, buf, r) < 0) break;
-                    }
-                    close(out_fd);
-                    LOGI("gadget copied to %s", gadget_path.c_str());
-                } else {
-                    LOGW("Unable to write gadget to app cache");
-                }
+                struct stat gsb{};
+                fstat(gfd, &gsb);
+                gadget_length = gsb.st_size;
+                gadget_data = mmap(nullptr, gadget_length, PROT_READ, MAP_PRIVATE, gfd, 0);
                 close(gfd);
+                LOGI("gadget mmap ok size=%zu", gadget_length);
             } else {
                 LOGW("Unable to open zygisk/gadget.so in module dir");
             }

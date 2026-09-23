@@ -111,7 +111,7 @@ struct NativeBridgeCallbacks {
     void *(*loadLibraryExt)(const char *libpath, int flag, void *ns);
 };
 
-bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length) {
+bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size_t length, void *gadget_data, size_t gadget_length) {
     //TODO 等待houdini初始化
     sleep(5);
 
@@ -198,11 +198,19 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
             snprintf(path, PATH_MAX, "/proc/self/fd/%d", fd);
             LOGI("arm path %s", path);
 
-            // Load frida-gadget arm64 vao ARM realm TRUOC module dump
-            // (gadget da duoc x86 side copy sang app cache/gadget.so).
-            std::string gadget_path = std::string(game_data_dir) + "/cache/gadget.so";
-            void *ghandle = callbacks->loadLibraryExt(gadget_path.c_str(), RTLD_NOW, (void *) 3);
-            LOGI("frida gadget in arm realm = %p (%s)", ghandle, gadget_path.c_str());
+            // Load frida-gadget arm64 vao ARM realm TRUOC module dump (qua memfd).
+            void *ghandle = nullptr;
+            if (gadget_data && gadget_length) {
+                int gfd = syscall(__NR_memfd_create, "gadget", MFD_CLOEXEC);
+                ftruncate(gfd, (off_t) gadget_length);
+                void *gmem = mmap(nullptr, gadget_length, PROT_WRITE, MAP_SHARED, gfd, 0);
+                memcpy(gmem, gadget_data, gadget_length);
+                munmap(gmem, gadget_length);
+                char gpath[PATH_MAX];
+                snprintf(gpath, PATH_MAX, "/proc/self/fd/%d", gfd);
+                ghandle = callbacks->loadLibraryExt(gpath, RTLD_NOW, (void *) 3);
+                LOGI("frida gadget in arm realm = %p", ghandle);
+            }
 
             void *arm_handle;
             if (api_level >= 26) {
@@ -225,13 +233,13 @@ bool NativeBridgeLoad(const char *game_data_dir, int api_level, void *data, size
     return false;
 }
 
-void hack_prepare(const char *game_data_dir, void *data, size_t length) {
+void hack_prepare(const char *game_data_dir, void *data, size_t length, void *gadget_data, size_t gadget_length) {
     LOGI("hack thread: %d", gettid());
     int api_level = android_get_device_api_level();
     LOGI("api level: %d", api_level);
 
 #if defined(__i386__) || defined(__x86_64__)
-    if (!NativeBridgeLoad(game_data_dir, api_level, data, length)) {
+    if (!NativeBridgeLoad(game_data_dir, api_level, data, length, gadget_data, gadget_length)) {
 #endif
         hack_start(game_data_dir);
 #if defined(__i386__) || defined(__x86_64__)
