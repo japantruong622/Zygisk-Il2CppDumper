@@ -245,7 +245,14 @@ void hack_prepare(const char *game_data_dir, void *data, size_t length, void *ga
         return;
     }
     // il2cpp init xong (arm side tao marker) -> moi nap frida-gadget vao ARM realm.
-    if (gadget_data && gadget_length && game_data_dir) {
+    // CONG TAC: chi load khi co file /data/local/tmp/frida_on (game chi chay binh thuong neu khong co).
+    bool frida_on = false;
+    {
+        struct stat sb{};
+        if (stat("/data/local/tmp/frida_on", &sb) == 0) frida_on = true;
+    }
+    LOGI("frida switch = %s", frida_on ? "ON" : "OFF");
+    if (frida_on && gadget_data && gadget_length && game_data_dir) {
         std::string marker = std::string(game_data_dir) + "/cache/il2cpp_ready";
         for (int i = 0; i < 120; i++) {
             struct stat sb{};
